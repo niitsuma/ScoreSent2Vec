@@ -1,9 +1,11 @@
-sentence2vec
+scored-sentence2vec
 ============
 
-Tools for mapping a sentence with arbitrary length to vector space
 
-We provide an implementation of the Paragraph Vector in Quoc Le and Tomas Mikolov's paper: Distributed representations of Sentences and Documents.
+
+Tools for mapping a sentence with arbitrary length with score of addtional informaton  to vector space
+
+We provide an extended implementation of the Paragraph Vector in Quoc Le and Tomas Mikolov's paper: Distributed representations of Sentences and Documents.
 
 This project is based on [gensim][1].
 
@@ -15,4 +17,4 @@ install requires:
   [1]: https://github.com/piskvorky/gensim
 
 
-2014-9-23 update: add test files for demo.
+2015-10-21 update: add test files for demo.
