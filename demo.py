@@ -34,7 +34,7 @@ sents=list(LineSentence(sent_file))
 
 def mysentscore1(sent):
     mywords=['the', 'and', 'of','with']
-    return  [sent.count(w)/10.0 for w in mywords] ##need 1/10.0 to avoid overflow
+    return  [sent.count(w)/10.0 for w in mywords] ##better 1/10.0 to avoid overflow
 
 sents_scores=[[s,mysentscore1(s)] for s in sents]
 #print sents_scores
@@ -58,8 +58,6 @@ print scores.mean()
 
 scores= cross_val_score(LogisticRegression(), X2, Y, scoring='accuracy', cv=2)
 print scores.mean()
-
-
 
 
 

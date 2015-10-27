@@ -1053,13 +1053,18 @@ class ScoredSent2Vec(utils.SaveLoad):
         #     sentences=[scs[0] for scs in scoredsentences]
         
         if model_file and scoredsentences:
+            #print 'reset ScoredSent2Vec'
             self.w2v = Word2Vec.load(model_file)
             self.vocab = self.w2v.vocab
             self.layer1_size = self.w2v.layer1_size
             self.reset_sent_vec(scoredsentences)
             for i in range(iteration):
-                self.train_sent(scoredsentences)
-
+                self.train_sent(scoredsentences,train_mode=0)
+            for i in range(iteration):
+                self.train_sent(scoredsentences,train_mode=1)
+            for i in range(iteration):
+                self.train_sent(scoredsentences,train_mode=2)
+                
     def reset_sent_vec(self, scoredsentences):
         """Reset all projection weights to an initial (untrained) state, but keep the existing vocabulary."""
         logger.info("resetting vectors for sentences")
@@ -1078,7 +1083,7 @@ class ScoredSent2Vec(utils.SaveLoad):
         self.scores_weight = (random.rand(self.scores_size,self.layer1_size) - 0.5) / self.layer1_size
 
 
-    def train_sent(self, scoredsentences, total_words=None, word_count=0, sent_count=0, chunksize=100):
+    def train_sent(self, scoredsentences, total_words=None, word_count=0, sent_count=0, chunksize=100,train_mode=0):
         """
         Update the model's neural weights from a sequence of sentences (can be a once-only generator stream).
         Each sentence must be a list of unicode strings.
@@ -1111,10 +1116,10 @@ class ScoredSent2Vec(utils.SaveLoad):
                     # update the learning rate before every job
                 alpha = max(self.min_alpha, self.alpha * (1 - 1.0 * word_count[0] / total_words))
                 if self.sg:
-                    job_words = sum(self.train_sent_vec_sg(self.w2v, sent_no, sentence, given_scores, alpha, work)
+                    job_words = sum(self.train_sent_vec_sg(self.w2v, sent_no, sentence, given_scores, alpha, work,train_mode=train_mode)
                                     for sent_no, sentence, given_scores in job)
                 else:
-                    job_words = sum(self.train_sent_vec_cbow(self.w2v, sent_no, sentence, given_scores, alpha, work, neu1)
+                    job_words = sum(self.train_sent_vec_cbow(self.w2v, sent_no, sentence, given_scores, alpha, work, neu1,train_mode=train_mode)
                                     for sent_no, sentence, given_scores in job)
                 with lock:
                     word_count[0] += job_words
@@ -1156,7 +1161,7 @@ class ScoredSent2Vec(utils.SaveLoad):
 
         return word_count[0]
 
-    def train_sent_vec_cbow(self, model, sent_no, sentence, given_scores, alpha, work=None, neu1=None):
+    def train_sent_vec_cbow(self, model, sent_no, sentence, given_scores, alpha, work=None, neu1=None,train_mode=0):
         """
         Update CBOW model by training on a single sentence.
 
@@ -1186,19 +1191,23 @@ class ScoredSent2Vec(utils.SaveLoad):
                 l1 /= len(word2_indices)
             neu1e = zeros(l1.shape)
 
-            l2c = self.scores_weight
+            #l2c = self.scores_weight
             
             if self.hs:
-                l2a = model.syn1[word.point] # 2d matrix, codelen x layer1_size
-                fa = 1. / (1. + exp(-dot(l1, l2a.T))) # propagate hidden -> output
-                ga = (1. - word.code - fa) * alpha # vector of error gradients multiplied by the learning rate
-                # model.syn1[word.point] += outer(ga, l1) # learn hidden -> output
-                neu1e += dot(ga, l2a) # save error
-
-                fac = 1.0 / (1.0 + exp(-dot(l1, l2c.T)))  #  propagate hidden -> output
-                gac = (1 - array(given_scores) - fac) * alpha  # vector of error gradients multiplied by the learning rate
-                self.scores_weight += outer(gac, l1)  # learn hidden -> output
-                neu1e += dot(gac, l2c) # save error
+                if train_mode == 0 or train_mode == 2:
+                    l2a = model.syn1[word.point] # 2d matrix, codelen x layer1_size
+                    fa = 1. / (1. + exp(-dot(l1, l2a.T))) # propagate hidden -> output
+                    ga = (1. - word.code - fa) * alpha # vector of error gradients multiplied by the learning rate
+                    # model.syn1[word.point] += outer(ga, l1) # learn hidden -> output
+                    neu1e += dot(ga, l2a) # save error
+                if train_mode == 1 or train_mode == 2:
+                    #####  need normalize as word count or outside word loop ##############
+                    l2c = self.scores_weight
+                    fac = 1.0 / (1.0 + exp(-dot(l1, l2c.T)))  #  propagate hidden -> output
+                    gac = (1 - array(given_scores) - fac) * alpha  # vector of error gradients multiplied by the learning rate
+                    if train_mode == 1:
+                        self.scores_weight += outer(gac, l1)  # learn hidden -> output
+                    neu1e += dot(gac, l2c) # save error
                 
 
             if self.negative:
@@ -1213,13 +1222,13 @@ class ScoredSent2Vec(utils.SaveLoad):
                 gb = (labels - fb) * alpha # vector of error gradients multiplied by the learning rate
                 # model.syn1neg[word_indices] += outer(gb, l1) # learn hidden -> output
                 neu1e += dot(gb, l2b) # save error
-
-            # model.syn0[word2_indices] += neu1e # learn input -> hidden, here for all words in the window separately
-            self.sents[sent_no] += neu1e # learn input -> hidden, here for all words in the window separately
+            if train_mode == 0 or train_mode == 2:
+                # model.syn0[word2_indices] += neu1e # learn input -> hidden, here for all words in the window separately
+                self.sents[sent_no] += neu1e # learn input -> hidden, here for all words in the window separately
 
         return len([word for word in sentence if word is not None])
 
-    def train_sent_vec_sg(self, model, sent_no, sentence, given_scores, alpha, work=None):
+    def train_sent_vec_sg(self, model, sent_no, sentence, given_scores, alpha, work=None,train_mode=0):
         """
         Update skip-gram model by training on a single sentence.
 
@@ -1248,23 +1257,15 @@ class ScoredSent2Vec(utils.SaveLoad):
                     # l1 = model.syn0[word.index]
                     l1 = self.sents[sent_no]
                     neu1e = zeros(l1.shape)
-
-                    l2c = self.scores_weight
-
+                    #l2c = self.scores_weight
                     if self.hs:
-                        # work on the entire tree at once, to push as much work into numpy's C routines as possible (performance)
-                        l2a = deepcopy(model.syn1[word2.point])  # 2d matrix, codelen x layer1_size
-                        fa = 1.0 / (1.0 + exp(-dot(l1, l2a.T)))  #  propagate hidden -> output
-                        ga = (1 - word2.code - fa) * alpha  # vector of error gradients multiplied by the learning rate
-                        # model.syn1[word2.point] += outer(ga, l1)  # learn hidden -> output
-                        
-                        #l2ca=  dot(l1c,given_scores)
-                        fac = 1.0 / (1.0 + exp(-dot(l1, l2c.T)))  #  propagate hidden -> output
-                        gac = (1 - array(given_scores) - fac) * alpha  # vector of error gradients multiplied by the learning rate
-                        self.scores_weight += outer(gac, l1)  # learn hidden -> output
-
-                        neu1e += dot(ga , l2a) # save error
-                        neu1e += dot(gac, l2c) # save error
+                        if train_mode == 0 or train_mode == 2:
+                            # work on the entire tree at once, to push as much work into numpy's C routines as possible (performance)
+                            l2a = deepcopy(model.syn1[word2.point])  # 2d matrix, codelen x layer1_size
+                            fa = 1.0 / (1.0 + exp(-dot(l1, l2a.T)))  #  propagate hidden -> output
+                            ga = (1 - word2.code - fa) * alpha  # vector of error gradients multiplied by the learning rate
+                            # model.syn1[word2.point] += outer(ga, l1)  # learn hidden -> output
+                            neu1e += dot(ga , l2a) # save error
 
                     if self.negative:
                         # use this word (label = 1) + `negative` other random words not from this sentence (label = 0)
@@ -1279,9 +1280,36 @@ class ScoredSent2Vec(utils.SaveLoad):
                         # model.syn1neg[word_indices] += outer(gb, l1) # learn hidden -> output
                         neu1e += dot(gb, l2b) # save error
 
-                    # model.syn0[word.index] += neu1e  # learn input -> hidden
-                    self.sents[sent_no] += neu1e  # learn input -> hidden
+                    if train_mode == 0 or train_mode == 2:
+                        # model.syn0[word.index] += neu1e  # learn input -> hidden
+                        self.sents[sent_no] += neu1e  # learn input -> hidden
 
+            if train_mode == 1 or train_mode == 2:
+                # #####  need normalize as word count or outside word loop ##############
+                l1 = self.sents[sent_no]
+                l2c = self.scores_weight
+                #l2ca=  dot(l1c,given_scores)
+                fac = 1.0 / (1.0 + exp(-dot(l1, l2c.T)))  #  propagate hidden -> output
+                gac = (1 - array(given_scores) - fac) * alpha  # vector of error gradients multiplied by the learning rate
+                if train_mode == 1:
+                    self.scores_weight += outer(gac, l1)  # learn hidden -> output
+                neu1e += dot(gac, l2c) # save error
+
+
+         # for pos, word in enumerate(sentence):
+         #    if word is None:
+         #        continue  
+         #    reduced_window = random.randint(model.window) 
+         #    start = max(0, pos - model.window + reduced_window)
+         #    for pos2, word2 in enumerate(sentence[start : pos + model.window + 1 - reduced_window], start):
+         #        if word2:
+         #            l1 = self.sents[sent_no]
+         #            l2c = self.scores_weight
+         #            fac = 1.0 / (1.0 + exp(-dot(l1, l2c.T))) 
+         #            gac = (1 - array(given_scores) - fac) * alpha 
+         #            self.scores_weight += outer(gac, l1)  
+                    
+                    
         return len([word for word in sentence if word is not None])
 
     def save_sent2vec_format(self, fname):
